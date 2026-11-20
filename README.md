@@ -5,8 +5,8 @@ screen). It brings the apps and look of the [UV-5RM custom firmware](https://git
 to the Mini, rewritten in C for the Mini's processor.
 
 > **Read this first.** Flashing replaces the factory firmware and **there is no way back to stock**: no factory image
-> for this radio is published. It has been run on **one** radio (firmware V0.05, hardware V1.7, model `NRFB`). A
-> failed flash can leave the radio unusable. You use this entirely at your own risk. You are responsible for
+> for this radio is published. It has been run on **one** radio (firmware V0.05, hardware V1.7, model `NRFB`); see
+> [Check your radio first](#check-your-radio-first). A failed flash can leave the radio unusable. You use this entirely at your own risk. You are responsible for
 > transmitting only where you are licensed to.
 
 ## What you get
@@ -20,9 +20,28 @@ to the Mini, rewritten in C for the Mini's processor.
 | **Look** | Blue Angel theme, harp start-up chime |
 | **PC** | `UV_Channels.html` reads and writes channels and bands in Chrome or Edge |
 
+## Check your radio first
+
+Both of these must match before you flash:
+
+1. **Model:** hold `8` while switching the radio on. The screen must show `5MINI NRFB`.
+2. **Firmware version:** in the factory menu, open **Radio Info**. It must show **Firmware V0.05** (Hardware V1.7).
+
+| Factory firmware | Status |
+|---|---|
+| **V0.05** | **Confirmed** (the only version this has run on) |
+| V0.04 | Not confirmed. It might be fine, but nobody has tried it yet |
+| Anything else | Unknown. Don't flash |
+
+Why the version matters: the update only rewrites the radio's program. The sounds and configuration data stay where
+the factory firmware put them, and this image expects them where **V0.05** keeps them. V0.04 keeps the same data
+48 bytes earlier. If the image and the radio disagree, the radio's own loader rejects the update at its final check,
+and the radio can be left stuck in update mode with no way back. If your radio is on V0.04 and you try it anyway,
+please report what happened so others know.
+
 ## What you need
 
-- A UV-5R Mini. To check the model, hold `8` while switching it on: the screen should show `5MINI NRFB`.
+- A UV-5R Mini that passed the checks above.
 - The Baofeng programming cable (USB, CH340), pushed **all the way** into the radio's jack.
 - A **fully charged** battery. The update takes about 4 minutes and the radio must not lose power.
 - Windows with [Python 3](https://www.python.org/) and pyserial: `py -m pip install pyserial`.
@@ -91,6 +110,7 @@ back.
 | `image sha256 ... does not match` | Wrong file or hash. Nothing was sent |
 | The cable stops answering after transmitting | Transmitting with the cable plugged in can lock up the cable's USB chip. Unplug and replug it. Test transmit with the cable unplugged |
 | The flash stopped part way | Run the same flash command again; the radio's loader waits for it |
+| `SAVE OFF` on the main screen after starting | The memory area the firmware saves settings in already held other data, so it won't write there. The radio works, but settings changes aren't kept after switching off. Please report it |
 
 ## Building from source
 
