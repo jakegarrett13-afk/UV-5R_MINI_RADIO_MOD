@@ -1,4 +1,7 @@
-/* Native Mini port, milestone N36: battery gauge (PB3 / stock thresholds from NOR 0xF200), top right.
+/* Native Mini port, milestone N38: TEXT tail 100 -> 20 ms; reply-window timing measured (TEXT title, diag).
+ * N37: TEXT hunts the other radio's frequency offset (receive offset per try, the
+ * working one remembered).
+ * N36: battery gauge (PB3 / stock thresholds from NOR 0xF200), top right.
  * N35: TEXT receive settings final (N21 set + the 5RM RX audio filter 0x2B 0x0300);
  * the profile test UI removed.
  * N34 (TEXT test build, round 3: power-on values of the Mini-only init registers).
@@ -84,6 +87,7 @@ static u32 link_diag(void);
 static u32 fe_diag(void);
 static u32 text_regs_diag(void);
 static u32 text_diag2(void);
+static u32 text_window(unsigned i);
 static u8 bat_level, bat_th[6];           /* N36 battery (defined with the battery code) */
 static u16 bat_raw, bat_avg16;
 
@@ -91,9 +95,9 @@ static u16 bat_raw, bat_avg16;
 void mini_diag_reply(void)
 {
     extern bool uart_update_cmd(u8, u8 *, u32);
-    u32 d[37];
+    u32 d[45];
     unsigned i;
-    d[0] = 0x334e494d; d[1] = 36; d[2] = native_ticks; d[3] = native_chip;
+    d[0] = 0x334e494d; d[1] = 38; d[2] = native_ticks; d[3] = native_chip;
     d[4] = spi_errors;
     d[5] = p33_rx_1byte(R3_PR_OUT) | (p33_rx_1byte(R3_PR_DIR) << 8)
            | (p33_rx_1byte(R3_PR_DIE) << 16);
@@ -118,6 +122,7 @@ void mini_diag_reply(void)
     for (i = 0; i < 4; ++i)
         d[32 + i] = radio.reset_vals[2 * i] | (i < 3 ? (u32)radio.reset_vals[2 * i + 1] << 16 : 0);
     d[36] = bat_raw | ((u32)(bat_avg16 / 16u) << 8) | ((u32)bat_level << 16) | ((u32)bat_th[0] << 24);   /* N36 battery */
+    for (i = 0; i < 8; ++i) d[37 + i] = text_window(i);                   /* N38 TEXT reply windows, oldest first */
     uart_update_cmd(0x70, (u8 *)d, sizeof(d));
 }
 
@@ -1953,6 +1958,12 @@ static void key_beep(void)
 
 static u32 text_diag(void) { return text_counters(); }
 static u32 text_diag2(void) { return text_counters2(); }
+static u32 text_window(unsigned i)
+{
+    unsigned n = t_rec_n < 8 ? t_rec_n : 8;
+    if (i >= n) return 0;
+    return t_rec[(t_rec_n - n + i) % 8];
+}
 /* N21: TEXT was written and tuned on the UV-5RM, whose driver (fd6818b.rs init/apply_modulation for FM) sets these
  * baseband receive registers differently from the Mini's stock init. Same chip (BK4829); none of them is a PLL/VCO or
  * board-specific RF setting. While TEXT is open the Mini uses the 5RM values; its own are saved first and restored on

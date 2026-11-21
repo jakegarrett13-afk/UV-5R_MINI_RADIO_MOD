@@ -15,7 +15,7 @@ to the Mini, rewritten in C for the Mini's processor.
 |---|---|
 | **Radio** | VFO A/B and 1000 channels, direct frequency entry, receive CTCSS/DCS, transmit tone, repeater shift/offset, wide/narrow, HIGH/LOW power from the radio's own calibration, time-out timer |
 | **Scan** | Hold `#`: scans the stored channels (or the VFO band). Stops on a signal and resumes after it ends |
-| **Apps** (`MENU`) | **TEXT** (short messages between radios, with delivery confirmation; talks to the UV-5RM custom firmware), **SEARCH** (finds a nearby transmitter's frequency and tone), **SCANQT** (reads the tone on your frequency), **FOX HUNT** (signal meter and rough distance) |
+| **Apps** (`MENU`) | **TEXT** (short messages between radios, with delivery confirmation; talks to the UV-5RM custom firmware and adjusts for the small frequency difference between radios), **SEARCH** (finds a nearby transmitter's frequency and tone), **SCANQT** (reads the tone on your frequency), **FOX HUNT** (signal meter and rough distance) |
 | **Settings** (`MENU` → `SETTINGS`) | Current channel (incl. save the VFO as a named channel, delete a channel), all channels, audio (roger beep, squelch tail), display (screen time-out, key lock), programmable keys, TX band lock |
 | **Battery** | 5-bar gauge at the top right, using the radio's own factory calibration; warns at 1 bar and when it needs charging |
 | **Look** | Blue Angel theme, harp start-up chime, screen turns off after 10 s without a key (adjustable) |
@@ -62,7 +62,7 @@ Find the cable's COM port in Device Manager → Ports. The examples use `COM3`. 
 3. **Flash.** The last argument is the image's SHA-256 (also in `firmware\SHA256SUMS.txt`). The tool refuses to send
    a file that doesn't match it.
    ```
-   py tools\mini_fw_update.py COM3 flash firmware\mini-native-n36.ufw ebb417baba5a0bb407575f93061f03143c4433a9cc046bc607e765414167cf5b
+   py tools\mini_fw_update.py COM3 flash firmware\mini-native-n38.ufw 780123eba48233cece1d77e3e4e417a0bea653ea635b71bb7cb038ae1cfa6080
    ```
    You should see `image ok`, a `PONG`, then read counts scrolling for 3½–4 minutes, then
    `RESULT 0x00 in loader: OK`. **Don't touch the radio or the cable** until it says `Done`. The screen may go dark
@@ -80,7 +80,7 @@ No key combination is needed: the custom firmware listens for updates all the ti
    It should show `"build": ...`, `"rf_chip": "0x4829"` and `"tx_keyed": false`. Only flash when `tx_keyed` is false.
 2. Flash the new image the same way as step 3 above. Your settings, channels and TEXT messages are kept.
 
-The current build is **N36**. `SETTINGS` → `SYSTEM` → `VERSION` shows the build on the radio.
+The current build is **N38**. `SETTINGS` → `SYSTEM` → `VERSION` shows the build on the radio.
 
 ## Programming channels
 
@@ -120,7 +120,8 @@ back.
 | Problem | Fix |
 |---|---|
 | The tools get no answer | Push the cable fully in, charge the battery, unplug and replug the USB, then try again |
-| TEXT messages often don't show DELIVERED | Check the battery gauge first. A nearly flat battery stops the radio from hearing the reply |
+| TEXT messages often don't show DELIVERED | Check the battery gauge first: a nearly flat battery stops the radio from hearing the reply. Builds before N38 also missed many replies right after sending |
+| Numbers like `C412 S418` in the TEXT title | Timing of the last reply in ms (C = reply heard, S = locked on; `---` = none). A diagnostic readout; it doesn't affect anything |
 | `image sha256 ... does not match` | Wrong file or hash. Nothing was sent |
 | The cable stops answering after transmitting | Transmitting with the cable plugged in can lock up the cable's USB chip. Unplug and replug it. Test transmit with the cable unplugged |
 | The flash stopped part way | Run the same flash command again; the radio's loader waits for it |

@@ -68,7 +68,8 @@ static const u8 t_saved_regs[10] = {R_FSK, R_CTRL, R_SYNC1, R_SYNC2, R_CRC, R_SI
 #define T_BAUD 4646
 #define LEAD_MS 30
 #define NEXT_PACKET_LEAD_MS 20
-#define TAIL_MS 100
+#define TAIL_MS 20         /* N38: was 100. The 5RM schedules its reply from the end of the packet and needs 150 ms
+                            * of quiet first, so every ms of tail is a ms less for the Mini to come back to receive */
 #define PACKET 32
 #define RX_SIZE 34
 #define CHARS 25
@@ -135,8 +136,23 @@ static struct text_state {
     bool reply_due; u32 reply_at; u8 reply_to, reply_id;
     const char *notice; u32 notice_left;
     u8 n_sync, n_ok, n_bad, n_tx, n_delivered, n_reply_seen;   /* N16 diagnostics */
+    int rx_off;                                                  /* N37: receive offset in use, Hz */
+    u32 unkey_at; u16 carr_ms, sync_ms; bool window;            /* N38: reply-window timing after our unkey */
 } ts;
 
+/* N37: receive-offset hunt. The other radio's carrier sits a few hundred Hz off ours (FREQ ERR: -430 / -470 Hz with
+ * a 5RM), enough to put TEXT's narrow 450-baud FSK at the edge of the sync detector, so replies were heard on some days
+ * and not others. The transmit frequency never moves (the other radio hears the Mini fine); the receive frequency for
+ * the reply to try n is the learned offset plus T_RX_STEP[n]. A good packet makes that offset the learned one; it is
+ * kept across TEXT sessions (RAM). */
+static const s16 T_RX_STEP[MAX_TRIES] = {0, -400, 400, -800, 800, -200, 200, -600};
+/* Start: FREQ ERR with the user's 5RM read -470 Hz cool and -630 Hz during TEXT (transmitting warms the crystals), so
+ * the receiver starts 550 Hz low; the steps cover drift either way. */
+static int t_rx_learn = -550;             /* Hz */
+/* N38 test: the last 8 reply windows, each (ms from our unkey to the reply carrier | ms to sync << 16), 0xFFFF = none */
+static u32 t_rec[8];
+static unsigned t_rec_n;
+#define T_RX_LIMIT 1200
 static void t_set_notice(const char *text) { ts.notice = text; ts.notice_left = NOTICE_100US; ts.redraw_hint = true; }
 
 static void modem_off(void)
@@ -240,6 +256,8 @@ static int t_transmit(u8 packets[][PACKET], unsigned count)
     rf_write(R_DEV, dev);
     rf_write(R_FILTER, filter);
     api_set_ptt(false);
+    ts.unkey_at = api_uptime_100us();                         /* N38: open the reply window */
+    ts.window = true; ts.carr_ms = ts.sync_ms = 0xFFFF;
     api_set_tx_enabled(false);
     api_set_af_out(false);
     modem_rx();
@@ -249,6 +267,14 @@ static int send_out(void)
 {
     unsigned len = ts.out_len, total = (len + CHARS - 1) / CHARS, part;
     u8 packets[2][PACKET];
+    {   /* N37: listen for this try's reply at the learned offset plus the try's step */
+        unsigned k = ts.pending && ts.tries ? (unsigned)(ts.tries - 1) % MAX_TRIES : 0;
+        int off = t_rx_learn + T_RX_STEP[k];
+        if (off > T_RX_LIMIT) off = T_RX_LIMIT;
+        if (off < -T_RX_LIMIT) off = -T_RX_LIMIT;
+        ts.rx_off = off;
+        api_set_rx_freq((u32)((int)ts.hz + off));
+    }
     if (total < 1) total = 1;
     memset(packets, 0, sizeof(packets));
     for (part = 0; part < total; ++part) {
@@ -292,6 +318,14 @@ static void end_send(u8 status, const char *notice)
 {
     u8 h[REC_HEAD];
     ts.pending = false;
+    if (ts.rx_off != t_rx_learn) {                           /* N37: back to the learned offset to listen */
+        ts.rx_off = t_rx_learn;
+        api_set_rx_freq((u32)((int)ts.hz + t_rx_learn));
+        api_enter_rx();
+        api_set_holds_rx(false);
+        api_set_af_out(false);
+        modem_rx();
+    }
     read_head(ts.out_slot, h);
     if (head_valid(h) && h[1] == STATUS_SENDING && h[2] == ts.out_id) api_nor_write(log_addr(ts.out_slot) + 1, &status, 1);
     ts.redraw_msgs = true;
@@ -384,6 +418,7 @@ static void take_packet(void)
     t_scramble(p);
     if (p[0] != T_MAGIC || p[CHECK_AT] != t_checksum(p)) { ++ts.n_bad; return; }
     ++ts.n_ok;
+    t_rx_learn = ts.rx_off;                                   /* N37: this offset works with this radio */
     if (p[3] == 0) {
         ++ts.n_reply_seen;
         if (ts.pending && p[4] == ts.me && p[5] == ts.out_id) {
@@ -434,7 +469,9 @@ static void poll_modem(void)
         }
         rf_write(R_INT, 0);
         flags = rf_read(R_INT);
-        if (flags & IRQ_SYNC) { ++ts.n_sync; ts.rx_active = true; ts.rx_i = 0; memset(ts.rx_buf, 0, PACKET); wait = RX_WAIT_STEPS; }
+        if (flags & IRQ_SYNC) { ++ts.n_sync;
+            if (ts.window && ts.sync_ms == 0xFFFF) ts.sync_ms = (u16)((api_uptime_100us() - ts.unkey_at) / 10);
+            ts.rx_active = true; ts.rx_i = 0; memset(ts.rx_buf, 0, PACKET); wait = RX_WAIT_STEPS; }
         if ((flags & IRQ_WORD) && ts.rx_active) {
             rx_word();
             wait = RX_WAIT_STEPS;
@@ -458,7 +495,8 @@ static void text_enter(void)
     ts.wide = api_get_master_wide();
     api_set_tx_enabled(false);
     api_set_modulation(0);
-    api_set_rx_freq(ts.hz);
+    ts.rx_off = t_rx_learn;
+    api_set_rx_freq((u32)((int)ts.hz + t_rx_learn));          /* N37: listen at the learned offset */
     api_set_tx_freq(ts.hz);
     api_set_bandwidth(ts.wide);
     api_set_subaudio_rx(0);
@@ -483,14 +521,25 @@ static u32 text_counters(void)
 {
     return ts.n_sync | ((u32)ts.n_ok << 8) | ((u32)ts.n_bad << 16) | ((u32)ts.n_tx << 24);
 }
-static u32 text_counters2(void) { return ts.n_reply_seen | ((u32)ts.n_delivered << 8); }
+static u32 text_counters2(void)
+{
+    return ts.n_reply_seen | ((u32)ts.n_delivered << 8) | ((u32)(u8)(s8)(t_rx_learn / 10) << 16) | ((u32)(u8)(s8)(ts.rx_off / 10) << 24);
+}
 static void text_tick(u32 dt)
 {
     bool quiet;
     if (countdown(&ts.tap_left, dt)) { ts.tap_key = T_NO_KEY; ts.redraw_comp = true; }
     if (countdown(&ts.notice_left, dt)) { ts.notice = 0; ts.erase_armed = false; ts.redraw_hint = true; }
     if (ts.join_active) { ts.join_age += dt; if (ts.join_age >= JOIN_100US) ts.join_active = false; }
-    if (api_read_rssi() >= BUSY_RAW) ts.last_busy = api_uptime_100us();
+    if (api_read_rssi() >= BUSY_RAW) {
+        ts.last_busy = api_uptime_100us();
+        if (ts.window && ts.carr_ms == 0xFFFF) ts.carr_ms = (u16)((ts.last_busy - ts.unkey_at) / 10);
+    }
+    if (ts.window && api_uptime_100us() - ts.unkey_at > 25000) {   /* N38: 2.5 s later, close and record the window */
+        ts.window = false;
+        t_rec[t_rec_n++ % 8] = ts.carr_ms | ((u32)ts.sync_ms << 16);
+        ts.redraw_all = true;
+    }
     poll_modem();
     if (ts.chime_due) {
         static const u16 up[2] = {880, 1320}, down[2] = {1320, 880};
@@ -607,7 +656,13 @@ static void draw_title(void)
     char b[32], f[16];
     api_fill_rect(0, T_TITLE_Y, T_W, 12, T_HEADER);
     api_fmt_freq(ts.hz, (u8 *)f);
-    snprintf(b, sizeof(b), "TEXT %s %s", f, ts.high_power ? "HIGH" : "LOW");
+    if (t_rec_n) {                                 /* N38 test: the last reply window, ms after our unkey */
+        u32 r = t_rec[(t_rec_n - 1) % 8];
+        char c[6], sy[6];
+        if ((r & 0xffff) == 0xffff) snprintf(c, sizeof(c), "---"); else snprintf(c, sizeof(c), "%u", (unsigned)(r & 0xffff));
+        if ((r >> 16) == 0xffff) snprintf(sy, sizeof(sy), "---"); else snprintf(sy, sizeof(sy), "%u", (unsigned)(r >> 16));
+        snprintf(b, sizeof(b), "%s C%s S%s", f, c, sy);
+    } else snprintf(b, sizeof(b), "TEXT %s %s", f, ts.high_power ? "HIGH" : "LOW");
     t_texts(4, T_TITLE_Y + 1, b, T_WHITE, T_HEADER, T_F6);
 }
 static u16 slot_back(u16 back) { return (ts.log_head + LOG_SLOTS - 1 - back) % LOG_SLOTS; }

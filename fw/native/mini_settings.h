@@ -356,7 +356,7 @@ static void it_value(unsigned it, char *b, unsigned n)
         else snprintf(b, n, "%u/5 %u", bat_level, bat_avg16 / 16u);
         break;
     case IT_CHIP: snprintf(b, n, "0x%04X", radio.chip_id); break;
-    case IT_VER: snprintf(b, n, "N36"); break;
+    case IT_VER: snprintf(b, n, "N38"); break;
     case IT_RESET: snprintf(b, n, "%s", reset_armed ? "SURE? MENU" : ""); break;
     default: b[0] = 0;
     }

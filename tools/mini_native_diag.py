@@ -49,7 +49,7 @@ try:
             continue
         if crc16(f[:-2]) != int.from_bytes(f[-2:], 'little'):
             raise SystemExit('Response CRC mismatch')
-        if f[4] != 0x70 or n not in (49,81,89,97,101,105,109,121,125,129,145,149):   # 145: N34+, 149: N36+
+        if f[4] != 0x70 or n not in (49,81,89,97,101,105,109,121,125,129,145,149,181):   # 145: N34+, 149: N36+, 181: N38+
             raise SystemExit('Unexpected diagnostic response: ' + f.hex())
         d = struct.unpack('<%dI' % ((n-1)//4), f[5:-2])
         names = ['magic', 'build', 'ticks', 'rf_chip', 'spi_errors', 'pr_out_dir_die',
@@ -77,6 +77,8 @@ try:
         if len(d) >= 30:  # N16+: TEXT packet counters since TEXT opened, PC link state
             out |= {'text_sync': d[27] & 0xff, 'text_good': (d[27] >> 8) & 0xff, 'text_bad': (d[27] >> 16) & 0xff,
                     'text_sent': d[27] >> 24, 'text_replies_seen': d[28] & 0xff, 'text_delivered': (d[28] >> 8) & 0xff,
+                    'text_rx_learned_hz': ((((d[28] >> 16) & 0xff) ^ 0x80) - 0x80) * 10,
+                    'text_rx_offset_hz': ((((d[28] >> 24) & 0xff) ^ 0x80) - 0x80) * 10,
                     'pc_port_115200_now': bool(d[29] & 1), 'pc_alternation_off': bool(d[29] & 2),
                     'pc_session_state': (d[29] >> 2) & 3, 'pc_sessions': (d[29] >> 8) & 0xff, 'pc_frames': d[29] >> 16}
         if len(d) >= 31:  # N19+: FREQ ERR (other radio's carrier minus ours)
@@ -91,6 +93,9 @@ try:
         if len(d) >= 37:  # N36+: battery (PB3 >> 2), smoothed, bars (6 = critical, 255 = not yet), lowest threshold
             out |= {'battery_raw': d[36] & 0xff, 'battery_avg': (d[36] >> 8) & 0xff, 'battery_bars': (d[36] >> 16) & 0xff,
                     'battery_threshold_low': d[36] >> 24}
+        if len(d) >= 45:  # N38+: TEXT reply windows (ms from our unkey to the reply carrier / to sync), oldest first
+            ms = lambda v: None if v == 0xffff else v
+            out |= {'text_reply_windows': [{'carrier_ms': ms(w & 0xffff), 'sync_ms': ms(w >> 16)} for w in d[37:45] if w]}
         print(json.dumps({k: v if k in ('build','ticks','spi_errors','frequency_hz','frequency_word_readback','rssi','monitor','audible','tune_ok') else hex(v)
                           for k, v in zip(names,d)} | out, indent=2))
         break
