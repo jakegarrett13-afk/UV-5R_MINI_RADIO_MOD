@@ -49,7 +49,7 @@ try:
             continue
         if crc16(f[:-2]) != int.from_bytes(f[-2:], 'little'):
             raise SystemExit('Response CRC mismatch')
-        if f[4] != 0x70 or n not in (49,81,89,97,101,105,109,121,125,129):
+        if f[4] != 0x70 or n not in (49,81,89,97,101,105,109,121,125,129,145,149):   # 145: N34+, 149: N36+
             raise SystemExit('Unexpected diagnostic response: ' + f.hex())
         d = struct.unpack('<%dI' % ((n-1)//4), f[5:-2])
         names = ['magic', 'build', 'ticks', 'rf_chip', 'spi_errors', 'pr_out_dir_die',
@@ -85,6 +85,12 @@ try:
             out |= {'freq_err_state': ['none', 'measured', 'no carrier', 'measuring'][min(d[30] >> 24, 3)], 'freq_err_hz': fe}
         if len(d) >= 32:  # N21+: the Mini's own REG 0x3D / 0x73, read when TEXT last opened (0 = not yet)
             out |= {'mini_reg3d_before_text': hex(d[31] >> 16), 'mini_reg73_before_text': hex(d[31] & 0xffff)}
+        if len(d) >= 36:  # N34+: the RF chip's power-on values of the Mini-only init registers
+            vals = [d[32 + k // 2] >> (16 * (k % 2)) & 0xffff for k in range(7)]
+            out |= {'rf_poweron': {r: hex(v) for r, v in zip(['0x17', '0x25', '0x3a', '0x42', '0x4c', '0x4d', '0x4e'], vals)}}
+        if len(d) >= 37:  # N36+: battery (PB3 >> 2), smoothed, bars (6 = critical, 255 = not yet), lowest threshold
+            out |= {'battery_raw': d[36] & 0xff, 'battery_avg': (d[36] >> 8) & 0xff, 'battery_bars': (d[36] >> 16) & 0xff,
+                    'battery_threshold_low': d[36] >> 24}
         print(json.dumps({k: v if k in ('build','ticks','spi_errors','frequency_hz','frequency_word_readback','rssi','monitor','audible','tune_ok') else hex(v)
                           for k, v in zip(names,d)} | out, indent=2))
         break

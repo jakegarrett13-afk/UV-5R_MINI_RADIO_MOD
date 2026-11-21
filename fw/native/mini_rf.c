@@ -45,6 +45,10 @@ bool mini_rf_init(struct mini_rf *r, const struct mini_rf_io *io)
     r->chip_id = io->read(0);
     if (r->chip_id != 0x4829) return false;
     io->write(0, 0x8000); io->write(0, 0);
+    {   /* N34: power-on values, see mini_rf.h reset_vals */
+        static const uint8_t regs[7] = {0x17, 0x25, 0x3a, 0x42, 0x4c, 0x4d, 0x4e};
+        for (i = 0; i < 7; ++i) r->reset_vals[i] = io->read(regs[i]);
+    }
     for (i = 0; i < sizeof(initial) / sizeof(initial[0]); ++i)
         io->write(initial[i].reg, initial[i].value);
     /* Stock 0x01E47224: the one read-modify-write in its init, TX deviation 1290 (N15; missing before). */
@@ -308,6 +312,8 @@ bool mini_rf_tx_on(struct mini_rf *r, uint32_t hz, uint8_t pa_target, uint8_t pa
     if (!r->ready || !r->cal_valid || r->transmitting) return false;
     if (pa_target == 0 || pa_target == 0xff || (pa_gain != 0xff && pa_gain != 0xd7)) return false;
     if (!((hz >= 136000000u && hz <= 174000000u) || (hz >= 400000000u && hz <= 480000000u))) return false;
+    /* N30/N31: the board's audio power settles (driven low) before anything changes at key-up */
+    if (r->io->tx_audio) r->io->tx_audio(true);
     /* receive off, speaker muted */
     audio(r, false);
     r->io->write(0x36, 0x007f);                 /* stock PA off value */
@@ -390,6 +396,7 @@ void mini_rf_tx_off(struct mini_rf *r)
     r->transmitting = false;
     r->frequency_hz = 0;
     r->state = 0;
+    if (r->io->tx_audio) r->io->tx_audio(false);   /* N30/N31: after release */
 }
 
 /* Local beep through the RF chip's tone generator: REG70 tone-1 on, REG30 0 then 0x0302 (tone state), tone word

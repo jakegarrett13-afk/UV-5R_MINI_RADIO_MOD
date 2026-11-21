@@ -164,7 +164,7 @@ enum {
     IT_BEEP, IT_ROGER, IT_STE, IT_RPTRL,
     IT_LIGHT, IT_AUTOLK,
     IT_SIDE_SH, IT_SIDE_LG, IT_PTTA, IT_BAND_SH, IT_BAND_LG,
-    IT_FLOCK, IT_BOOT, IT_BOOTSND, IT_FERR, IT_CHIP, IT_VER, IT_RESET, IT_COUNT
+    IT_FLOCK, IT_BOOT, IT_BOOTSND, IT_BATT, IT_FERR, IT_CHIP, IT_VER, IT_RESET, IT_COUNT
 };
 static const char *const it_label[IT_COUNT] = {
     "W/N", "PWR", "RX TONE", "TX TONE", "SHIFT", "OFFSET", "BUSY LOCK", "SCAN ADD", "SAVE AS CH", "DELETE CH",
@@ -172,7 +172,7 @@ static const char *const it_label[IT_COUNT] = {
     "BEEP", "ROGER", "STE", "RPT TAIL",
     "LIGHT", "AUTO LOCK",
     "SIDE-SH", "SIDE-LG", "PTT-A", "[-]-SH", "[-]-LG",
-    "TX LOCK", "BOOT SCR", "BOOT SND", "FREQ ERR", "RF CHIP", "VERSION", "RESET",
+    "TX LOCK", "BOOT SCR", "BOOT SND", "BATTERY", "FREQ ERR", "RF CHIP", "VERSION", "RESET",
 };
 static const u8 sg_first[SG_COUNT + 1] = {IT_WN, IT_SQL, IT_BEEP, IT_LIGHT, IT_SIDE_SH, IT_FLOCK, IT_COUNT};
 static bool chan_item(unsigned it) { return it <= IT_SCANADD; }
@@ -302,7 +302,7 @@ static void it_range(unsigned it, int *lo, int *hi, bool *wrap)
 }
 static bool it_readonly(unsigned it)
 {
-    if (it == IT_CHIP || it == IT_VER) return true;
+    if (it == IT_CHIP || it == IT_VER || it == IT_BATT) return true;
     if (it == IT_SCANADD && !mr_mode) return true;
     if (it == IT_SAVECH && mr_mode) return true;
     if (it == IT_DELCH && !mr_mode) return true;
@@ -350,8 +350,13 @@ static void it_value(unsigned it, char *b, unsigned n)
         if (fe_state == 1) snprintf(b, n, "%c%dHZ", fe_hz < 0 ? '-' : '+', fe_hz < 0 ? -fe_hz : fe_hz);
         else snprintf(b, n, "%s", fe_state == 2 ? "NO SIGNAL" : fe_state == 3 ? "LISTENING" : "MENU=TEST");
         break;
+    case IT_BATT:                                       /* N36: bars and the smoothed 8-bit PB3 reading */
+        if (bat_level == 0xff) snprintf(b, n, "--");
+        else if (bat_level == 6) snprintf(b, n, "LOW %u", bat_avg16 / 16u);
+        else snprintf(b, n, "%u/5 %u", bat_level, bat_avg16 / 16u);
+        break;
     case IT_CHIP: snprintf(b, n, "0x%04X", radio.chip_id); break;
-    case IT_VER: snprintf(b, n, "N29"); break;
+    case IT_VER: snprintf(b, n, "N36"); break;
     case IT_RESET: snprintf(b, n, "%s", reset_armed ? "SURE? MENU" : ""); break;
     default: b[0] = 0;
     }

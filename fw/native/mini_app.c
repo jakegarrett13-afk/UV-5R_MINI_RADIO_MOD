@@ -1,4 +1,14 @@
-/* Native Mini port, milestone N29: harp picks slowed to 120 ms, each plucked note fading.
+/* Native Mini port, milestone N36: battery gauge (PB3 / stock thresholds from NOR 0xF200), top right.
+ * N35: TEXT receive settings final (N21 set + the 5RM RX audio filter 0x2B 0x0300);
+ * the profile test UI removed.
+ * N34 (TEXT test build, round 3: power-on values of the Mini-only init registers).
+ * N33 (TEXT test build, round 2: the 5RM RX filter 0x2B in every profile).
+ * N32 (TEXT test build): receive profiles P0-P3 on the side key in TEXT, with replies
+ * detected / sent and the reply signal strength in the TEXT title.
+ * N31: PB8 held LOW while transmitting (N30 held it high: no mic audio).
+ * N30: BAND SWEEP removed (user); PB8 audio power driven as stock (on with the speaker and for the whole
+ * transmission; was floating: key-up/release pops); TEXT also uses the 5RM RX AGC values 0x13/0x49 and 0x2A.
+ * N29: harp picks slowed to 120 ms, each plucked note fading.
  * N28: start-up chime is a harp (four rising strums, fading top notes); boot screen 3 s.
  * N27: SAVE AS CH (VFO -> a named channel), DELETE CH (with confirm), start-up chime
  * (BOOT SND).
@@ -38,6 +48,7 @@
 #include "asm/timer.h"
 #include "asm/power/p33.h"
 #include "asm/spi.h"
+#include "asm/adc_api.h"
 #include "mini_rf.h"
 #include <string.h>
 
@@ -73,14 +84,16 @@ static u32 link_diag(void);
 static u32 fe_diag(void);
 static u32 text_regs_diag(void);
 static u32 text_diag2(void);
+static u8 bat_level, bat_th[6];           /* N36 battery (defined with the battery code) */
+static u16 bat_raw, bat_avg16;
 
 /* Read-only telemetry, sent only on a diagnostic request at idle UART speed. */
 void mini_diag_reply(void)
 {
     extern bool uart_update_cmd(u8, u8 *, u32);
-    u32 d[32];
+    u32 d[37];
     unsigned i;
-    d[0] = 0x334e494d; d[1] = 29; d[2] = native_ticks; d[3] = native_chip;
+    d[0] = 0x334e494d; d[1] = 36; d[2] = native_ticks; d[3] = native_chip;
     d[4] = spi_errors;
     d[5] = p33_rx_1byte(R3_PR_OUT) | (p33_rx_1byte(R3_PR_DIR) << 8)
            | (p33_rx_1byte(R3_PR_DIE) << 16);
@@ -101,6 +114,10 @@ void mini_diag_reply(void)
     d[29] = link_diag();
     d[30] = fe_diag();
     d[31] = text_regs_diag();
+    /* N34: the RF chip's power-on values of 0x17 0x25 0x3A 0x42 0x4C 0x4D 0x4E (two per word, first in the low half) */
+    for (i = 0; i < 4; ++i)
+        d[32 + i] = radio.reset_vals[2 * i] | (i < 3 ? (u32)radio.reset_vals[2 * i + 1] << 16 : 0);
+    d[36] = bat_raw | ((u32)(bat_avg16 / 16u) << 8) | ((u32)bat_level << 16) | ((u32)bat_th[0] << 24);   /* N36 battery */
     uart_update_cmd(0x70, (u8 *)d, sizeof(d));
 }
 
@@ -426,7 +443,24 @@ static void rf_write(u8 reg, u16 value)
 }
 /* Stock fn_01e41350: PC7 high for VHF, low for UHF in RX mode. */
 static void rf_band(bool uhf) { put(IO_PORTC_07, !uhf); }
-static void rf_speaker(bool on) { put(IO_PORTB_09, on); }
+/* N30: PB8 is the audio power, shared like stock fn_01e400d4 (high while a sound source needs it); PB9 enables the
+ * speaker. N29 and earlier never drove PB8 (left floating), so the RF burst at key-up and release popped the speaker.
+ * On: PB8 then PB9; off: PB9 then PB8.
+ * N31: during a transmission PB8 is held LOW. N30 held it high (misreading stock mode 9/10, which belongs to the DTMF /
+ * PTT-ID sequencer fn_01e4dcc0, not to plain TX), and that silenced the microphone (roger tones, made inside the RF
+ * chip, still went out). Stock key-up first turns receive audio off (mode 6), so PB8 is low while keyed. */
+static u8 amp_users;
+#define AMP_SPEAKER 1
+static void amp_power(void) { gpio_set_output_value(IO_PORTB_08, amp_users != 0); }
+static void rf_speaker(bool on)
+{
+    if (on) { amp_users |= AMP_SPEAKER; amp_power(); put(IO_PORTB_09, 1); }
+    else { put(IO_PORTB_09, 0); amp_users &= (u8)~AMP_SPEAKER; amp_power(); }
+}
+static void rf_tx_audio(bool on)
+{
+    if (on) { put(IO_PORTB_09, 0); amp_users = 0; amp_power(); }   /* keyed: speaker off, audio power driven low */
+}
 static void rf_settle(unsigned ms) { os_time_dly((ms + 9) / 10); }
 /* Stock 0x01E418AE -> 0x01E5739E(0, on): PR0 output, high only while transmitting. Other PR bits preserved. */
 static void rf_tx_aux(bool on)
@@ -435,7 +469,7 @@ static void rf_tx_aux(bool on)
     p33_tx_1byte(R3_PR_OUT, out | (on ? BIT(0) : 0));
     p33_and_1byte(R3_PR_DIR, (u8)~BIT(0));
 }
-static const struct mini_rf_io radio_io = {rf_read, rf_write, rf_band, rf_speaker, rf_settle, rf_tx_aux};
+static const struct mini_rf_io radio_io = {rf_read, rf_write, rf_band, rf_speaker, rf_settle, rf_tx_aux, rf_tx_audio};
 
 static void rx_status(void)
 {
@@ -827,13 +861,12 @@ static u16 api_subaudio_code_of_index(int i);
 #include "mini_settings.h"
 /* App launcher (the custom firmware's MENU list, in its order). Apps appear here as they are ported.
  * Each entry names up to two app segments (bf5rh_abi Chain): SEARCH/QT SCAN starts on QT SCAN and "1" switches. */
-enum { AP_TEXT, AP_FOX, AP_SWEEP, AP_SEARCH, AP_QT, AP_COUNT };   /* N23: SPECTRUM, N25: RPT FINDER and SEARCH/QT SCAN removed (user) */
+enum { AP_TEXT, AP_FOX, AP_SEARCH, AP_QT, AP_COUNT };   /* N23: SPECTRUM, N25: RPT FINDER and SEARCH/QT SCAN, N30: BAND SWEEP removed (user) */
 struct launch_entry { const char *name; u8 seg[2]; bool combined; };
 static const struct launch_entry launch_list[] = {
     {"SETTINGS", {0xff, 0xff}, false},
     {"SEARCH", {AP_SEARCH, 0xff}, false},
     {"SCANQT", {AP_QT, 0xff}, false},
-    {"BAND SWEEP", {AP_SWEEP, 0xff}, false},
     {"FOX HUNT", {AP_FOX, 0xff}, false},
     {"TEXT", {AP_TEXT, 0xff}, false},
 };
@@ -938,6 +971,72 @@ static void draw_band(unsigned i, int top)
         (void)x;
     }
 }
+/* ---- battery (N36): as stock V0.04 ----
+ * PB3 = the battery divider, ADC channel AD_CH_PB3 (stock fn_01e4695a sets PB3 analog; fn_01e46a00 reads it >> 2).
+ * Stock fn_01e46dfa compares that 8-bit value with six thresholds from the calibration at NOR 0xF200 (fn at 0x01E4750E;
+ * defaults if 0 or 0xFF). This radio's: 140 145 155 165 183 205. Here: 5 bars above the highest down to 0 bars at the
+ * lowest; below it = critical. Sampled every 0.5 s except while transmitting and 1.5 s after (the voltage sags under
+ * load), smoothed, and a new bar count has to hold for 4 samples. */
+static u8 bat_th[6] = {140, 145, 155, 165, 183, 205};
+static u16 bat_raw, bat_avg16;           /* last 8-bit sample, smoothed x16 */
+static u8 bat_level = 0xff, bat_pending = 0xff, bat_pending_n; /* 0..5 bars, 6 = critical; 0xff = not measured */
+static u32 bat_next_ms, bat_note_ms, bat_tx_ms;
+static bool bat_blink;
+static void battery_init(void)
+{
+    u8 t[6];
+    gpio_set_direction(IO_PORTB_03, 1);
+    gpio_set_die(IO_PORTB_03, 0);
+    gpio_set_pull_up(IO_PORTB_03, 0);
+    gpio_set_pull_down(IO_PORTB_03, 0);
+    adc_add_sample_ch(AD_CH_PB3);
+    if (nor_read(0xF200, t, 6) && t[0] != 0 && t[0] != 0xff) {
+        unsigned i; bool ok = true;
+        for (i = 1; i < 6; ++i) if (t[i] <= t[i - 1] || t[i] == 0xff) ok = false;
+        if (ok) memcpy(bat_th, t, 6);
+    }
+}
+static u8 battery_bars(unsigned v)
+{
+    int k;
+    for (k = 5; k >= 1; --k) if (v > bat_th[k]) return (u8)k;
+    return v >= bat_th[0] ? 0 : 6;          /* 6 = below the lowest threshold: critical */
+}
+static void battery_service(void)
+{
+    u32 now = jiffies_msec();
+    u8 lv;
+    if (radio.transmitting) { bat_tx_ms = now; return; }
+    if ((int)(now - bat_next_ms) < 0 || now - bat_tx_ms < 1500) return;
+    bat_next_ms = now + 500;
+    bat_raw = (u16)(adc_get_value(AD_CH_PB3) >> 2);
+    if (bat_raw == 0) return;                /* not sampled yet */
+    if (!bat_avg16) bat_avg16 = (u16)(bat_raw * 16);
+    else bat_avg16 = (u16)(bat_avg16 + ((int)(bat_raw * 16) - (int)bat_avg16) / 8);
+    lv = battery_bars(bat_avg16 / 16u);
+    if (bat_level == 0xff) bat_level = lv;
+    else if (lv != bat_level) {
+        if (lv == bat_pending) { if (++bat_pending_n >= 4) { bat_level = lv; bat_pending = 0xff; } }
+        else { bat_pending = lv; bat_pending_n = 1; }
+    } else bat_pending = 0xff;
+    bat_blink = !bat_blink;
+    if (bat_level == 6 && now - bat_note_ms > 30000) { bat_note_ms = now; set_notice("CHARGE BATTERY"); }
+    else if (bat_level == 1 && !bat_note_ms) { bat_note_ms = now; set_notice("BATTERY LOW"); }
+    if (bat_level >= 2 && bat_level <= 5) bat_note_ms = 0;
+}
+/* 5-segment icon, top right of the status bar (x 104-125). */
+static void draw_battery(void)
+{
+    int x = 104, y = 2, w = 19, h = 8, k;
+    bool crit = bat_level == 6;
+    u16 frame = crit ? (bat_blink ? C_ALERT : C_HAIR) : C_DIM;
+    u16 fill = bat_level >= 3 && bat_level <= 5 ? C_GREEN : bat_level == 2 ? C_AMBER : C_ALERT;
+    g_fill(x, y, w, 1, frame); g_fill(x, y + h - 1, w, 1, frame);
+    g_fill(x, y, 1, h, frame); g_fill(x + w - 1, y, 1, h, frame);
+    g_fill(x + w, y + 2, 2, h - 4, frame);                     /* the terminal */
+    if (bat_level > 5) return;                                  /* unknown or critical: empty */
+    for (k = 0; k < bat_level; ++k) g_fill(x + 2 + k * 3, y + 2, 2, h - 4, fill);
+}
 static void draw_standby(void)
 {
     char b[24];
@@ -954,7 +1053,8 @@ static void draw_standby(void)
         else if (radio.monitor) g_text(&F5, 4 + 4 * F5.w, F5.base + 2, "MON", C_AMBER);
         if (tot_level == 0 && !scanning) g_text(&F5, 4 + 8 * F5.w, F5.base + 2, "NOTOT", C_DIM);
     }
-    g_text_right(&F5, 122, F5.base + 2, mode_short(), C_BLUE);
+    g_text_right(&F5, 100, F5.base + 2, mode_short(), C_BLUE);   /* N36: left of the battery */
+    draw_battery();
     g_fill(0, ST_STATUS_H, 128, 1, C_BLUE);
     draw_band(0, BAND_TOP0);
     g_fill(0, BAND_TOP1 - 1, 128, 1, C_HAIR);
@@ -1011,7 +1111,7 @@ static void screen_sig(unsigned r, char *s, unsigned n)
     switch (r) {
     case 0: snprintf(s, n, "%u%u%u%u%u%u%u%lu", scr, radio.transmitting, radio.squelch, radio.monitor, mr_mode * 2 + !tot_level, chan_mode,
                      scanning * 4 + scan_phase * 2 + scan_up,
-                     radio.transmitting ? (unsigned long)tx_elapsed_s() : 0ul); break;
+                     radio.transmitting ? (unsigned long)tx_elapsed_s() : (unsigned long)(bat_level * 2u + (bat_level == 6 && bat_blink)) + 1000ul); break;
     case 1: case 2: {
         unsigned i = r - 1;
         snprintf(s, n, "%u%u%u%u%lu%lu%u%u%u%s|%s|%u%u%u%u%s", scr, vfo_sel, mr_mode, mr_index, (unsigned long)vfo_hz[i],
@@ -1849,7 +1949,6 @@ static void key_beep(void)
 #include "app_text.h"
 #include "app_shared.h"
 #include "app_fox.h"
-#include "app_sweep.h"
 #include "app_search.h"
 
 static u32 text_diag(void) { return text_counters(); }
@@ -1860,26 +1959,37 @@ static u32 text_diag2(void) { return text_counters2(); }
  * exit, so voice keeps the stock configuration.
  *   0x73 AFC 0x4681 (Mini 0x6681: bit 13 differs)     0x3D IF select 0x2AAB (8.46 kHz; the Mini never writes it)
  *   0x46 0x600A (Mini 0x6050)   0x4F 0x2F2E (0x2A28)   0x26 0x13A0   0x4A 0x5430   0x2C 0x1822 (0x0022) */
-static const struct { u8 reg; u16 val; } text_rx_regs[7] = {
+/* TEXT receive settings: the UV-5RM driver's baseband receive values (TEXT was written and tuned on the 5RM), the
+ * Mini's own values saved on open and restored on exit. Never PLL/VCO registers (0x1C/0x1D/0x1F stay the Mini's).
+ *   0x73 AFC 0x4681   0x3D IF 0x2AAB   0x46 0x600A   0x4F 0x2F2E   0x26 0x13A0   0x4A 0x5430   0x2C 0x1822
+ *   0x2B RX audio filter 0x0300 (5RM rx_on; N32: 0/5 -> 4/5 confirmed)
+ * N32-N34 profile tests: the 5RM AGC values (0x13/0x49/0x2A), its volume (0x48) and the chip's power-on values of the
+ * Mini-only init registers gave no better result. After a flat battery was replaced: 5/5 confirmed with this set (N34 P0)
+ * -- a nearly flat battery had been skewing the earlier rounds. */
+#define TEXT_RX_REGS 8
+static const struct { u8 reg; u16 val; } text_rx_regs[TEXT_RX_REGS] = {
     {0x73, 0x4681}, {0x3D, 0x2AAB}, {0x46, 0x600A}, {0x4F, 0x2F2E}, {0x26, 0x13A0}, {0x4A, 0x5430}, {0x2C, 0x1822},
+    {0x2B, 0x0300},
 };
-static u16 text_rx_saved[7];
+static u16 text_rx_saved[TEXT_RX_REGS];
 static bool text_rx_applied;
 static u16 orig_3d, orig_73;
 static u32 text_regs_diag(void) { return ((u32)orig_3d << 16) | orig_73; }
 static void text_rx_apply(void)
 {
     unsigned i;
-    for (i = 0; i < 7; ++i) text_rx_saved[i] = rf_read(text_rx_regs[i].reg);
-    orig_73 = text_rx_saved[0]; orig_3d = text_rx_saved[1];
-    for (i = 0; i < 7; ++i) rf_write(text_rx_regs[i].reg, text_rx_regs[i].val);
+    if (!text_rx_applied) {
+        for (i = 0; i < TEXT_RX_REGS; ++i) text_rx_saved[i] = rf_read(text_rx_regs[i].reg);
+        orig_73 = text_rx_saved[0]; orig_3d = text_rx_saved[1];
+    }
+    for (i = 0; i < TEXT_RX_REGS; ++i) rf_write(text_rx_regs[i].reg, text_rx_regs[i].val);
     text_rx_applied = true;
 }
 static void text_rx_restore(void)
 {
     unsigned i;
     if (!text_rx_applied) return;
-    for (i = 0; i < 7; ++i) rf_write(text_rx_regs[i].reg, text_rx_saved[i]);
+    for (i = 0; i < TEXT_RX_REGS; ++i) rf_write(text_rx_regs[i].reg, text_rx_saved[i]);
     text_rx_applied = false;
 }
 /* ---- app framework (N22): one app at a time owns the screen and the radio ---- */
@@ -1890,7 +2000,6 @@ struct app_def { void (*enter)(void); int (*key)(u8, u8); void (*tick)(u32); voi
 static const struct app_def apps[AP_COUNT] = {
     [AP_TEXT] = {text_app_enter, text_app_key, text_tick, text_draw, text_app_leave},
     [AP_FOX] = {fox_enter, fox_key, fox_tick, fox_draw, fox_leave},
-    [AP_SWEEP] = {sweep_enter, sweep_key, sweep_tick, sweep_draw, sweep_leave},
     [AP_SEARCH] = {search_enter, search_key, search_tick, search_draw, search_leave},
     [AP_QT] = {qtscan_enter, qtscan_key, qtscan_tick, qtscan_draw, qtscan_leave},
 };
@@ -2268,7 +2377,7 @@ void mini_app_main(void)
     for (i = 0; i < 4; ++i) { output(IO_PORTA_06+i, 1); input(IO_PORTC_02+i); }
     input(IO_PORTA_04); input(IO_PORTA_12); input(IO_PORTB_11);
     output(RF_CS, 1); output(RF_CLK, 0); output(RF_DATA, 0);
-    output(IO_PORTB_09, 0); output(IO_PORTC_07, 1);
+    output(IO_PORTB_08, 0); output(IO_PORTB_09, 0); output(IO_PORTC_07, 1);   /* N30: PB8 audio power driven low */
     flashlight(false);
     hop_disabled = keys() == K_SIDE_EQ;    /* side key held at power-on: PC port stays at 9600 */
     lcd_init();
@@ -2279,6 +2388,7 @@ void mini_app_main(void)
     mini_rf_init(&radio, &radio_io);
     native_chip = radio.chip_id;
     load_calibration();
+    battery_init();
     set_have = settings_scan(set_saved);
     if (set_have) settings_apply(set_saved);
     ext_have = ext_scan(ext_saved);          /* N26 */
@@ -2356,6 +2466,7 @@ void mini_app_main(void)
         scan_service();
         ptt_service();
         light_service();
+        battery_service();
         if (scr == SCR_APP) app_service();
         else if (!(ticks++ % 10)) {
             rx_status();

@@ -12,6 +12,8 @@ struct mini_rf_io {
     void (*speaker)(bool on);
     void (*settle)(unsigned ms);
     void (*tx_aux)(bool on);      /* stock 0x01E418AE: PR0 high only while transmitting */
+    void (*tx_audio)(bool on);    /* N30/N31, optional: called with true before anything changes at key-up (the board drives
+                                   * its audio power low for the transmission) and with false after release */
 };
 /* Per-radio calibration from the settings NOR (same layout as stock V0.04 loads and the UV-25 driver uses):
  * th_in/th_out 0xF0C0/0xF0D0 (squelch levels 0-9, REG 0x78 units), off_u400 0xF0E0 ((MHz-400)/10),
@@ -44,6 +46,9 @@ struct mini_rf {
     bool am_applied;
     uint16_t saved_73, saved_3d;  /* the Mini's own AFC / IF values, restored when AM ends */
     struct mini_rf_tone tx_tone;  /* N26: CTCSS/DCS sent by the next mini_rf_tx_on (NONE = none) */
+    /* N34: the chip's power-on values (read right after the soft reset, before the Mini's init table) of the registers
+     * the Mini's stock init writes but the UV-5RM driver never does: 0x17 0x25 0x3A 0x42 0x4C 0x4D 0x4E. */
+    uint16_t reset_vals[7];
 };
 bool mini_rf_init(struct mini_rf *, const struct mini_rf_io *);
 bool mini_rf_tune(struct mini_rf *, uint32_t hz);

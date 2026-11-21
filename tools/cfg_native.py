@@ -19,7 +19,7 @@ if b"mini_app_main();" not in raw:
     app.write_bytes(raw)
 source = sdk / "apps/soundbox/mini_app.c"
 source.write_bytes((root / "fw/native/mini_app.c").read_bytes())
-for name in ("mini_rf.c", "mini_rf.h", "ui_assets.h", "app_text.h", "app_shared.h", "app_fox.h", "app_sweep.h",
+for name in ("mini_rf.c", "mini_rf.h", "ui_assets.h", "app_text.h", "app_shared.h", "app_fox.h", 
              "app_search.h", "mini_settings.h"):
     (sdk / "apps/soundbox" / name).write_bytes((root / "fw/native" / name).read_bytes())
 # This native app only uses SPI1. The SDK's generic SPI unit otherwise requires
