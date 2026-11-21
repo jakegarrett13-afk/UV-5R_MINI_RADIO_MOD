@@ -1,4 +1,5 @@
-/* Native Mini port, milestone N38: TEXT tail 100 -> 20 ms; reply-window timing measured (TEXT title, diag).
+/* Native Mini port, milestone N39: TEXT title shows the frequency and HIGH/LOW power again (timing only in diag).
+ * N38: TEXT tail 100 -> 20 ms; reply-window timing measured (TEXT title, diag).
  * N37: TEXT hunts the other radio's frequency offset (receive offset per try, the
  * working one remembered).
  * N36: battery gauge (PB3 / stock thresholds from NOR 0xF200), top right.
@@ -97,7 +98,7 @@ void mini_diag_reply(void)
     extern bool uart_update_cmd(u8, u8 *, u32);
     u32 d[45];
     unsigned i;
-    d[0] = 0x334e494d; d[1] = 38; d[2] = native_ticks; d[3] = native_chip;
+    d[0] = 0x334e494d; d[1] = 39; d[2] = native_ticks; d[3] = native_chip;
     d[4] = spi_errors;
     d[5] = p33_rx_1byte(R3_PR_OUT) | (p33_rx_1byte(R3_PR_DIR) << 8)
            | (p33_rx_1byte(R3_PR_DIE) << 16);

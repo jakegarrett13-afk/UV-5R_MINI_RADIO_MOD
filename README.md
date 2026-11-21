@@ -62,7 +62,7 @@ Find the cable's COM port in Device Manager → Ports. The examples use `COM3`. 
 3. **Flash.** The last argument is the image's SHA-256 (also in `firmware\SHA256SUMS.txt`). The tool refuses to send
    a file that doesn't match it.
    ```
-   py tools\mini_fw_update.py COM3 flash firmware\mini-native-n38.ufw 780123eba48233cece1d77e3e4e417a0bea653ea635b71bb7cb038ae1cfa6080
+   py tools\mini_fw_update.py COM3 flash firmware\mini-native-n39.ufw 3de41f7a594b1bf2f16f2228809e387bcb3042cb0b9c0e5731f85402835db5fa
    ```
    You should see `image ok`, a `PONG`, then read counts scrolling for 3½–4 minutes, then
    `RESULT 0x00 in loader: OK`. **Don't touch the radio or the cable** until it says `Done`. The screen may go dark
@@ -80,7 +80,7 @@ No key combination is needed: the custom firmware listens for updates all the ti
    It should show `"build": ...`, `"rf_chip": "0x4829"` and `"tx_keyed": false`. Only flash when `tx_keyed` is false.
 2. Flash the new image the same way as step 3 above. Your settings, channels and TEXT messages are kept.
 
-The current build is **N38**. `SETTINGS` → `SYSTEM` → `VERSION` shows the build on the radio.
+The current build is **N39**. `SETTINGS` → `SYSTEM` → `VERSION` shows the build on the radio.
 
 ## Programming channels
 
@@ -121,7 +121,6 @@ back.
 |---|---|
 | The tools get no answer | Push the cable fully in, charge the battery, unplug and replug the USB, then try again |
 | TEXT messages often don't show DELIVERED | Check the battery gauge first: a nearly flat battery stops the radio from hearing the reply. Builds before N38 also missed many replies right after sending |
-| Numbers like `C412 S418` in the TEXT title | Timing of the last reply in ms (C = reply heard, S = locked on; `---` = none). A diagnostic readout; it doesn't affect anything |
 | `image sha256 ... does not match` | Wrong file or hash. Nothing was sent |
 | The cable stops answering after transmitting | Transmitting with the cable plugged in can lock up the cable's USB chip. Unplug and replug it. Test transmit with the cable unplugged |
 | The flash stopped part way | Run the same flash command again; the radio's loader waits for it |

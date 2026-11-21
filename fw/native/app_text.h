@@ -149,7 +149,7 @@ static const s16 T_RX_STEP[MAX_TRIES] = {0, -400, 400, -800, 800, -200, 200, -60
 /* Start: FREQ ERR with the user's 5RM read -470 Hz cool and -630 Hz during TEXT (transmitting warms the crystals), so
  * the receiver starts 550 Hz low; the steps cover drift either way. */
 static int t_rx_learn = -550;             /* Hz */
-/* N38 test: the last 8 reply windows, each (ms from our unkey to the reply carrier | ms to sync << 16), 0xFFFF = none */
+/* N38: the last 8 reply windows (cable diagnostics), each (ms from our unkey to the reply carrier | ms to sync << 16), 0xFFFF = none */
 static u32 t_rec[8];
 static unsigned t_rec_n;
 #define T_RX_LIMIT 1200
@@ -537,8 +537,7 @@ static void text_tick(u32 dt)
     }
     if (ts.window && api_uptime_100us() - ts.unkey_at > 25000) {   /* N38: 2.5 s later, close and record the window */
         ts.window = false;
-        t_rec[t_rec_n++ % 8] = ts.carr_ms | ((u32)ts.sync_ms << 16);
-        ts.redraw_all = true;
+        t_rec[t_rec_n++ % 8] = ts.carr_ms | ((u32)ts.sync_ms << 16);   /* kept for the cable diagnostics only */
     }
     poll_modem();
     if (ts.chime_due) {
@@ -656,13 +655,7 @@ static void draw_title(void)
     char b[32], f[16];
     api_fill_rect(0, T_TITLE_Y, T_W, 12, T_HEADER);
     api_fmt_freq(ts.hz, (u8 *)f);
-    if (t_rec_n) {                                 /* N38 test: the last reply window, ms after our unkey */
-        u32 r = t_rec[(t_rec_n - 1) % 8];
-        char c[6], sy[6];
-        if ((r & 0xffff) == 0xffff) snprintf(c, sizeof(c), "---"); else snprintf(c, sizeof(c), "%u", (unsigned)(r & 0xffff));
-        if ((r >> 16) == 0xffff) snprintf(sy, sizeof(sy), "---"); else snprintf(sy, sizeof(sy), "%u", (unsigned)(r >> 16));
-        snprintf(b, sizeof(b), "%s C%s S%s", f, c, sy);
-    } else snprintf(b, sizeof(b), "TEXT %s %s", f, ts.high_power ? "HIGH" : "LOW");
+    snprintf(b, sizeof(b), "TEXT %s %s", f, ts.high_power ? "HIGH" : "LOW");   /* N39: power shown again (N38 showed timing) */
     t_texts(4, T_TITLE_Y + 1, b, T_WHITE, T_HEADER, T_F6);
 }
 static u16 slot_back(u16 back) { return (ts.log_head + LOG_SLOTS - 1 - back) % LOG_SLOTS; }
